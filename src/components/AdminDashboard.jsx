@@ -295,6 +295,85 @@ export default function AdminDashboard() {
     await fetchData();
   };
 
+  // XÓA HỌC VIÊN KHỎI FIRESTORE VÀ TOÀN BỘ LỊCH SỬ
+  // Không xóa tài khoản Firebase Authentication.
+  const deleteStudent = async () => {
+    if (!selectedStudent || saving) return;
+
+    const student = selectedStudent;
+    const studentRecords = allAttendance.filter(
+      record => record.uid === student.id
+    );
+
+    // Firestore batch có giới hạn số thao tác ghi.
+    // Giới hạn thấp hơn 500 để toàn bộ việc xóa được thực hiện cùng lúc.
+    if (studentRecords.length > 450) {
+      alert(
+        'Học viên có hơn 450 buổi học. Hãy dùng backend ' +
+        'quản trị để xóa an toàn, tránh xóa dữ liệu dở dang.'
+      );
+      return;
+    }
+
+    const email = (student.email || '').trim();
+    if (!email) {
+      alert('Hồ sơ thiếu email; không thể xác nhận thao tác xóa.');
+      return;
+    }
+
+    const typedEmail = window.prompt(
+      `XÓA HỌC VIÊN: ${student.name || email}\n` +
+      `Sẽ xóa hồ sơ và ${studentRecords.length} buổi học.\n` +
+      'Thao tác không thể hoàn tác.\n\n' +
+      'Nhập chính xác email học viên để xác nhận:'
+    );
+
+    if (typedEmail !== email) {
+      if (typedEmail !== null) alert('Email xác nhận không khớp.');
+      return;
+    }
+
+    if (!window.confirm('Xác nhận xóa vĩnh viễn hồ sơ và lịch sử học?')) {
+      return;
+    }
+
+    setSaving(true);
+    let committed = false;
+
+    try {
+      // Truy vấn lại dữ liệu ngay trước khi xóa, tránh danh sách cũ.
+      const snapshot = await getDocs(
+        query(
+          collection(db, 'attendance'),
+          where('uid', '==', student.id)
+        )
+      );
+
+      if (snapshot.size > 450) {
+        throw new Error('Quá 450 buổi học, cần xóa qua backend.');
+      }
+
+      const batch = writeBatch(db);
+      snapshot.docs.forEach(item => batch.delete(item.ref));
+      batch.delete(doc(db, 'users', student.id));
+
+      await batch.commit();
+      committed = true;
+      setSelectedStudentId(null);
+      await refresh();
+      alert('Đã xóa hồ sơ và lịch sử khỏi Firestore. Tài khoản đăng nhập Firebase Authentication vẫn tồn tại.');
+    } catch (err) {
+      console.error(err);
+      alert(
+        committed
+          ? 'Đã xóa trên Firestore nhưng chưa tải lại được danh sách.'
+          : 'Không thể xóa học viên: ' + err.message
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // THÊM MỘT BUỔI HỌC
   const addSingleLesson = async event => {
     event.preventDefault();
@@ -668,6 +747,17 @@ export default function AdminDashboard() {
               <p className="text-gray-500 text-sm mt-1 break-all">
                 {selectedStudent.email}
               </p>
+
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={deleteStudent}
+                  disabled={saving}
+                  className="border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"
+                >
+                  {saving ? 'Đang xử lý...' : 'Xóa học viên'}
+                </button>
+              </div>
 
               <div className="bg-blue-50 rounded-lg p-5 mt-5 text-center">
                 <p className="text-gray-600 text-sm">
